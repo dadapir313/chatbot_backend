@@ -18,6 +18,7 @@
     "@langchain/community": "^1.1.12",
     "@langchain/core": "^1.1.19",
     "@langchain/groq": "^1.0.4",
+    "@langchain/mongodb": "^1.1.0",
     "@langchain/openai": "^1.2.5",
     "@langchain/pinecone": "^1.0.1",
     "@pinecone-database/pinecone": "^6.1.4",
@@ -31,6 +32,7 @@
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
     "langchain": "^0.3.15",
+    "mongodb": "^7.1.0",
     "pdf-parse": "1.1.1",
     "pg": "^8.17.2",
     "winston": "^3.19.0"

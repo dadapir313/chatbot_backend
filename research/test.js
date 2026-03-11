@@ -2,14 +2,13 @@ import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
 import { HuggingFaceTransformersEmbeddings } from "@langchain/community/embeddings/huggingface_transformers";
-import { Pinecone as PineconeClient } from "@pinecone-database/pinecone";
-import { PineconeStore } from "@langchain/pinecone";
+import { MongoClient } from "mongodb";
+import { MongoDBAtlasVectorSearch } from "@langchain/mongodb";
 import { ChatGroq } from "@langchain/groq";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { createStuffDocumentsChain } from "langchain/chains/combine_documents";
 import { createRetrievalChain } from "langchain/chains/retrieval";
-import { BufferMemory } from "langchain/memory";
 import { createHistoryAwareRetriever } from "langchain/chains/history_aware_retriever";
 import { PromptTemplate } from "@langchain/core/prompts";
 
@@ -17,32 +16,32 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(__dirname, "../.env") });
 
-const indexName = "medical-chatbot2";
-
-// Setup
 const embedding = new HuggingFaceTransformersEmbeddings({
     model: "sentence-transformers/all-MiniLM-L6-v2",
 });
 
-const pc = new PineconeClient({
-    apiKey: process.env.PINECONE_API_KEY,
-});
+// 1. Connection Strings
+const client = new MongoClient(process.env.MONGODB_URI);
+const dbName = "MedicalChatbotDB";
+const collectionName = "medical_data";
 
-const vectorStore = await PineconeStore.fromExistingIndex(
-    embedding,
-    { pineconeIndex: pc.Index(indexName) }
-);
+console.log("Connecting to MongoDB Atlas...");
+const collection = client.db(dbName).collection(collectionName);
+
+const vectorStore = new MongoDBAtlasVectorSearch(embedding, {
+    collection,
+    indexName: "medical-chatbot", // Naam check karlein dashboard se
+    textKey: "text",
+    embeddingKey: "embedding",
+});
 
 // --- Your Simple Code Start ---
 const retriever = vectorStore.asRetriever({
     searchType: "similarity",
     k: 3,
 });
-//Create memory object
-const memory = new BufferMemory({
-    returnMessages: true,
-    memoryKey: "chat_history",
-});
+// Chat History Array
+let chat_history = [];
 
 const rephrasePrompt = PromptTemplate.fromTemplate(`
 Chat history:
@@ -148,21 +147,17 @@ const combineDocsChain = await createStuffDocumentsChain({
 const retrievalChain = await createRetrievalChain({
     retriever: historyAwareRetriever,
     combineDocsChain,
-    memory,
 });
 
 // Question 1
-const query1 = "What is uric acid ?";
-const memoryVars1 = await memory.loadMemoryVariables({});
+const query1 = "What is India ?";
 const response1 = await retrievalChain.invoke({
     input: query1,
-    ...memoryVars1,
+    chat_history: chat_history,
 });
 
-await memory.saveContext(
-    { input: query1 },
-    { output: response1.answer }
-);
+chat_history.push(new HumanMessage(query1));
+chat_history.push(new SystemMessage(response1.answer));
 
 console.log("\nAnswer 1:");
 console.log(response1.answer);
@@ -170,18 +165,14 @@ console.log(response1.answer);
 
 // Question 2
 const query2 = "What are its treatments?";
-// Load history from memory
-const memoryVars2 = await memory.loadMemoryVariables({});
 
 const response2 = await retrievalChain.invoke({
     input: query2,
-    ...memoryVars2,
+    chat_history: chat_history,
 });
 
-await memory.saveContext(
-    { input: query2 },
-    { output: response2.answer }
-);
+chat_history.push(new HumanMessage(query2));
+chat_history.push(new SystemMessage(response2.answer));
 
 console.log("\nAnswer 2:");
 console.log(response2.answer);
@@ -189,5 +180,5 @@ console.log(response2.answer);
 
 // See stored memory
 console.log("\nStored chat history:");
-console.log(memory.chatHistory.messages);
+console.log(chat_history);
 

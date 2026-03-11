@@ -1,24 +1,21 @@
+import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
 import { HuggingFaceTransformersEmbeddings } from "@langchain/community/embeddings/huggingface_transformers";
-import { HuggingFaceInferenceEmbeddings } from "@langchain/community/embeddings/hf";
-
-import { Pinecone as PineconeClient } from "@pinecone-database/pinecone";
-import { PineconeStore } from "@langchain/pinecone";
+import { MongoClient } from "mongodb";
+import { MongoDBAtlasVectorSearch } from "@langchain/mongodb";
 import { ChatGroq } from "@langchain/groq";
-import { ChatPromptTemplate } from "@langchain/core/prompts";
+import { PromptTemplate, ChatPromptTemplate } from "@langchain/core/prompts";
+import { createHistoryAwareRetriever } from "langchain/chains/history_aware_retriever";
 import { createStuffDocumentsChain } from "langchain/chains/combine_documents";
 import { createRetrievalChain } from "langchain/chains/retrieval";
-import { PromptTemplate } from "@langchain/core/prompts";
-import { createHistoryAwareRetriever } from "langchain/chains/history_aware_retriever";
-import dotenv from 'dotenv';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { RunnableLambda } from "@langchain/core/runnables";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(__dirname, '../../.env') });
 
-const indexName = "medical-chatbot2";
-
+const client = new MongoClient(process.env.MONGODB_URI);
 
 let retrievalChain;
 let basicRetrievalChain;
@@ -33,51 +30,28 @@ async function initLLM() {
     if (retrievalChain) {
         return { retrievalChain, basicRetrievalChain };
     }
-    process.stdout.write("Initializing LLM Chain... ");
+    process.stdout.write("Initializing LLM Chain with MongoDB Atlas... ");
     console.time("llm_init");
-    const embedding = new HuggingFaceInferenceEmbeddings({
-        apiKey: process.env.HUGGINGFACEHUB_API_TOKEN,
+
+    const embedding = new HuggingFaceTransformersEmbeddings({
         model: "sentence-transformers/all-MiniLM-L6-v2",
-        provider: "hf-inference",
     });
 
-    const originalEmbedQuery = embedding.embedQuery.bind(embedding);
-    embedding.embedQuery = async (text) => {
-        const start = Date.now();
-        if (typeof text !== 'string') {
-            console.log(">>> [DEBUG] Embedding text is NOT a string:", typeof text);
-            console.dir(text, { depth: null });
-        }
-        const queryText = typeof text === 'string' ? text : (text?.input || JSON.stringify(text));
-        const res = await originalEmbedQuery(queryText);
-        console.log(`>>> [TIMING] 2.1 Hugging Face Query Embedding: ${Date.now() - start}ms`);
-        return res;
-    };
+    await client.connect();
+    const database = client.db("MedicalChatbotDB");
+    const collection = database.collection("medical_data");
 
-    const pc = new PineconeClient({
-        apiKey: process.env.PINECONE_API_KEY,
+    const vectorStore = new MongoDBAtlasVectorSearch(embedding, {
+        collection: collection,
+        indexName: "medical-chatbot", // Matches your Atlas Search Index name
+        textKey: "text",
+        embeddingKey: "embedding",
     });
-
-    const vectorStore = await PineconeStore.fromExistingIndex(
-        embedding,
-        { pineconeIndex: pc.Index(indexName) }
-    );
 
     const retriever = vectorStore.asRetriever({
         searchType: "similarity",
         k: 2,
     });
-
-    const originalGetDocs = retriever._getRelevantDocuments.bind(retriever);
-    retriever._getRelevantDocuments = async (query, runManager) => {
-        const start = Date.now();
-        // If query is an object, similaritySearch might fail later if not handled.
-        // We log it to help debug why basicRetrievalChain passes objects.
-        const res = await originalGetDocs(query, runManager);
-        console.log(`>>> [TIMING] 2.2 Pinecone Vector Search (Total): ${Date.now() - start}ms`);
-        return res;
-    };
-
 
     const llm = new ChatGroq({
         model: "llama-3.1-8b-instant",
@@ -180,7 +154,7 @@ Context:
     });
 
     basicRetrievalChain = await createRetrievalChain({
-        retriever: retriever,
+        retriever: RunnableLambda.from((input) => input.input).pipe(retriever),
         combineDocsChain,
     });
 
@@ -219,11 +193,11 @@ export async function* getAIResponse(input, chatHistory = []) {
 
         // Callbacks to see which internal part is slow
         const callbacks = [{
-            handleRetrieverStart() { console.time(">>> [TIMING] 2. Pinecone Retrieval"); },
+            handleRetrieverStart() { console.time(">>> [TIMING] 2. MongoDB Retrieval"); },
             handleRetrieverEnd(documents) {
-                console.timeEnd(">>> [TIMING] 2. Pinecone Retrieval");
+                console.timeEnd(">>> [TIMING] 2. MongoDB Retrieval");
                 if (documents) {
-                    console.log(`>>> [DEBUG] Retrieved ${documents.length} docs from Pinecone.`);
+                    console.log(`>>> [DEBUG] Retrieved ${documents.length} docs from MongoDB.`);
                 }
             },
             handleLLMStart(llm, prompts) {
