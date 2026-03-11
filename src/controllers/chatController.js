@@ -172,3 +172,28 @@ export const getMessages = async (req, res) => {
         res.status(500).json({ error: "Internal server error" });
     }
 };
+
+export const deleteConversation = async (req, res) => {
+    const { id } = req.params;
+    const userId = req.user.userId;
+    try {
+        // First check if it exists and belongs to the user
+        const conversation = await prisma.conversation.findUnique({
+            where: { id }
+        });
+
+        if (!conversation || conversation.userId !== userId) {
+            return res.status(404).json({ error: "Conversation not found" });
+        }
+
+        // Delete the conversation - Prisma/DB will handle the messages automatically!
+        await prisma.conversation.delete({
+            where: { id }
+        });
+
+        res.status(200).json({ message: "Conversation deleted successfully" });
+    } catch (error) {
+        console.error("Delete Error:", error);
+        res.status(500).json({ error: "Internal server error" });
+    }
+};
