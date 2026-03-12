@@ -197,3 +197,40 @@ export const deleteConversation = async (req, res) => {
         res.status(500).json({ error: "Internal server error" });
     }
 };
+
+export const renameConversation = async (req, res) => {
+   
+    
+    const { id } = req.params;
+    const { title } = req.body;
+    const userId = req.user.userId;
+   
+
+    try {
+        if (!title || typeof title !== 'string') {
+            return res.status(400).json({ error: "Title is required and must be a string" });
+        }
+
+        // Check if conversation exists and belongs to the user
+        const conversation = await prisma.conversation.findUnique({
+            where: { id }
+        });
+       
+        
+
+        if (!conversation || conversation.id !== id) {
+            return res.status(404).json({ error: "Conversation not found" });
+        }
+
+        // Update the title
+        const updatedConversation = await prisma.conversation.update({
+            where: { id },
+            data: { title }
+        });
+
+        res.status(200).json(updatedConversation);
+    } catch (error) {
+        console.error("Rename Error:", error);
+        res.status(500).json({ error: "Internal server error" });
+    }
+};

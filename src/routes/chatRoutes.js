@@ -1,5 +1,5 @@
 import express from 'express';
-import { sendMessage, getConversations, getMessages, deleteConversation } from '../controllers/chatController.js';
+import { sendMessage, getConversations, getMessages, deleteConversation, renameConversation } from '../controllers/chatController.js';
 import authMiddleware from '../middleware/authMiddleware.js';
 
 const router = express.Router();
@@ -11,5 +11,6 @@ router.post('/', sendMessage);
 router.get('/conversations', getConversations);
 router.get('/conversations/:id', getMessages);
 router.delete('/conversations/:id', deleteConversation);
+router.patch('/conversations/:id', renameConversation);
 
 export default router;
