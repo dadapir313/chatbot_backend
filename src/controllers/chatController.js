@@ -234,3 +234,53 @@ export const renameConversation = async (req, res) => {
         res.status(500).json({ error: "Internal server error" });
     }
 };
+
+export const toggleShare = async (req, res) => {
+    const { id } = req.params;
+    const { isShared } = req.body;
+    const userId = req.user.userId;
+
+    try {
+        const conversation = await prisma.conversation.findUnique({
+            where: { id }
+        });
+
+        if (!conversation || conversation.userId !== userId) {
+            return res.status(404).json({ error: "Conversation not found" });
+        }
+
+        const updatedConversation = await prisma.conversation.update({
+            where: { id },
+            data: { isShared }
+        });
+
+        res.status(200).json(updatedConversation);
+    } catch (error) {
+        console.error("Toggle Share Error:", error);
+        res.status(500).json({ error: "Internal server error" });
+    }
+};
+
+export const getSharedConversation = async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        const conversation = await prisma.conversation.findUnique({
+            where: { id },
+            include: {
+                messages: {
+                    orderBy: { createdAt: 'asc' }
+                }
+            }
+        });
+
+        if (!conversation || !conversation.isShared) {
+            return res.status(404).json({ error: "Shared conversation not found" });
+        }
+
+        res.status(200).json(conversation);
+    } catch (error) {
+        console.error("Get Shared Conversation Error:", error);
+        res.status(500).json({ error: "Internal server error" });
+    }
+};
