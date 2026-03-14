@@ -1,12 +1,13 @@
 import { prisma } from '../lib/prisma.js';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import { sendOTP } from '../utils/sendEmail.js';
 
-// Generate a random 6-digit OTP
-const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
+import * as otplib from 'otplib';
+
+const { authenticator } = otplib;
 
 export const signup = async (req, res) => {
+    console.log("signup");
     const { name, email, password } = req.body;
 
     try {
@@ -16,31 +17,29 @@ export const signup = async (req, res) => {
 
         const hashedPassword = await bcrypt.hash(password, 10);
         
-        // Generate OTP and expiration (10 minutes from now)
-        const otpCode = generateOTP();
-        const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
-
+        // Generate a new TOTP secret for the user
+        const totpSecret = authenticator.generateSecret();
+        console.log(totpSecret);
+        // Create an otpauth URL for QrCode display (Name, Service Name, Secret)
+        const otpauthUrl = authenticator.keyuri(email, 'Nura AI', totpSecret);
+        console.log(otpauthUrl)
         const user = await prisma.user.create({
             data: {
                 name,
                 email,
                 password: hashedPassword,
-                otpCode,
-                otpExpiresAt,
+                totpSecret,
                 isVerified: false
             }
         });
 
-        // Send OTP via email
-        try {
-            await sendOTP(email, otpCode);
-        } catch (emailError) {
-            console.error("Email sending failed:", emailError);
-            // We still proceed, but log the error
-        }
-
-        res.status(201).json({ message: "User registered. Please check your email for the OTP.", userId: user.id });
+        res.status(201).json({ 
+            message: "User registered. Please scan the QR code to setup Google Authenticator.", 
+            userId: user.id,
+            otpauthUrl // Send this to the frontend to render the QR code
+        });
     } catch (error) {
+        console.log(error); 
         if (error.code === 'P2002') {
             return res.status(400).json({ error: "Email already exists" });
         }
@@ -66,21 +65,22 @@ export const verifyOTP = async (req, res) => {
             return res.status(400).json({ error: "User is already verified" });
         }
 
-        if (user.otpCode !== code) {
-            return res.status(400).json({ error: "Invalid OTP code" });
+        if (!user.totpSecret) {
+            return res.status(400).json({ error: "No authenticator setup found for this user." });
         }
 
-        if (!user.otpExpiresAt || user.otpExpiresAt < new Date()) {
-            return res.status(400).json({ error: "OTP code has expired. Please request a new one." });
+        // Verify the provided 6-digit code against the user's secret
+        const isValid = authenticator.check(code, user.totpSecret);
+
+        if (!isValid) {
+            return res.status(400).json({ error: "Invalid authenticator code" });
         }
 
-        // Mark as verified and clear OTP fields
+        // Mark as verified, but DO NOT clear the totpSecret! They need it to log in later.
         const updatedUser = await prisma.user.update({
             where: { email },
             data: {
-                isVerified: true,
-                otpCode: null,
-                otpExpiresAt: null
+                isVerified: true
             }
         });
 
@@ -92,54 +92,13 @@ export const verifyOTP = async (req, res) => {
         );
 
         res.status(200).json({ 
-            message: "Email verified successfully", 
+            message: "Authenticator verified successfully", 
             token, 
             user: { id: updatedUser.id, name: updatedUser.name, email: updatedUser.email } 
         });
 
     } catch (error) {
-        console.error("OTP verification error:", error);
-        res.status(500).json({ error: "Internal server error" });
-    }
-};
-
-export const resendOTP = async (req, res) => {
-    const { email } = req.body;
-
-    try {
-        if (!email) {
-            return res.status(400).json({ error: "Email is required" });
-        }
-
-        const user = await prisma.user.findUnique({ where: { email } });
-
-        if (!user) {
-            return res.status(404).json({ error: "User not found" });
-        }
-
-        if (user.isVerified) {
-            return res.status(400).json({ error: "User is already verified" });
-        }
-
-        // Generate new OTP
-        const otpCode = generateOTP();
-        const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
-
-        await prisma.user.update({
-            where: { email },
-            data: { otpCode, otpExpiresAt }
-        });
-
-        // Send new OTP
-        try {
-            await sendOTP(email, otpCode);
-        } catch (emailError) {
-            console.error("Email sending failed:", emailError);
-        }
-
-        res.status(200).json({ message: "A new OTP has been sent to your email" });
-    } catch (error) {
-        console.error("OTP resend error:", error);
+        console.error("TOTP verification error:", error);
         res.status(500).json({ error: "Internal server error" });
     }
 };
@@ -161,16 +120,21 @@ export const login = async (req, res) => {
         }
 
         // Verify that the user has completed OTP verification
-        // Legacy accounts (created before OTP) won't have an otpCode, so we let them pass
-        if (!user.isVerified && user.otpCode !== null) {
-            return res.status(403).json({ error: "Email not verified. Please verify your email first.", unverifiedEmail: user.email });
+        // Legacy accounts (created before OTP) won't have a totpSecret, so we let them pass
+        if (!user.isVerified && user.totpSecret) {
+            const otpauthUrl = authenticator.keyuri(email, 'Nura AI', user.totpSecret);
+            return res.status(403).json({ 
+                error: "Account not verified. Please scan the QR code first.", 
+                unverifiedEmail: user.email,
+                otpauthUrl 
+            });
         }
 
         const isMatch = await bcrypt.compare(password, user.password);
         
         if (isMatch) {
             // Auto-verify legacy accounts on their first successful login
-            if (!user.isVerified && user.otpCode === null) {
+            if (!user.isVerified && !user.totpSecret) {
                 await prisma.user.update({
                     where: { email },
                     data: { isVerified: true }
