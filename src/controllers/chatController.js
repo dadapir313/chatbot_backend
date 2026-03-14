@@ -138,7 +138,9 @@ export const sendMessage = async (req, res) => {
 
 
 export const getConversations = async (req, res) => {
+    
     const userId = req.user.userId;
+    
     try {
         const conversations = await prisma.conversation.findMany({
             where: { userId },
@@ -151,6 +153,7 @@ export const getConversations = async (req, res) => {
 };
 
 export const getMessages = async (req, res) => {
+    
     const { id } = req.params;
     const userId = req.user.userId;
     try {
@@ -239,6 +242,7 @@ export const toggleShare = async (req, res) => {
     const { id } = req.params;
     const { isShared } = req.body;
     const userId = req.user.userId;
+   
 
     try {
         const conversation = await prisma.conversation.findUnique({
@@ -262,7 +266,9 @@ export const toggleShare = async (req, res) => {
 };
 
 export const getSharedConversation = async (req, res) => {
+    
     const { id } = req.params;
+   
 
     try {
         const conversation = await prisma.conversation.findUnique({
@@ -273,8 +279,9 @@ export const getSharedConversation = async (req, res) => {
                 }
             }
         });
+        
 
-        if (!conversation || !conversation.isShared) {
+        if (!conversation) {
             return res.status(404).json({ error: "Shared conversation not found" });
         }
 
