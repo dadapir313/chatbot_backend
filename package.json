@@ -33,6 +33,7 @@
     "jsonwebtoken": "^9.0.3",
     "langchain": "^0.3.15",
     "mongodb": "^7.1.0",
+    "nodemailer": "^8.0.2",
     "pdf-parse": "1.1.1",
     "pg": "^8.17.2",
     "winston": "^3.19.0"
