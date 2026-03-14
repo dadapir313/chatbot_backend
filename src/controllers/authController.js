@@ -154,3 +154,69 @@ export const login = async (req, res) => {
         res.status(500).json({ error: "Internal server error" });
     }
 };
+
+export const googleLogin = async (req, res) => {
+    const { access_token } = req.body;
+
+    try {
+        if (!access_token) {
+            return res.status(400).json({ error: "Access token is required" });
+        }
+
+        // Verify token with Google
+        const googleResponse = await fetch(`https://www.googleapis.com/oauth2/v3/userinfo?access_token=${access_token}`);
+        const googleUser = await googleResponse.json();
+
+        if (!googleResponse.ok) {
+            return res.status(401).json({ error: "Invalid Google token" });
+        }
+
+        const { email, name, picture } = googleUser;
+        let isNewUser = false;
+
+        // Check if user exists
+        let user = await prisma.user.findUnique({
+            where: { email }
+        });
+
+        if (user) {
+            // User exists, update isVerified if not already
+            if (!user.isVerified) {
+                user = await prisma.user.update({
+                    where: { email },
+                    data: { isVerified: true }
+                });
+            }
+        } else {
+            // New user, create with placeholder password
+            isNewUser = true;
+            const placeholderPassword = await bcrypt.hash(Math.random().toString(36).slice(-10), 10);
+            user = await prisma.user.create({
+                data: {
+                    name: name || email.split('@')[0],
+                    email,
+                    password: placeholderPassword,
+                    isVerified: true
+                }
+            });
+        }
+
+        // Generate JWT token
+        const token = jwt.sign(
+            { userId: user.id, email: user.email },
+            process.env.JWT_SECRET,
+            { expiresIn: '1h' }
+        );
+
+        res.status(200).json({ 
+            message: isNewUser ? "Google registration successful" : "Google Login successful", 
+            token, 
+            isNewUser,
+            user: { id: user.id, name: user.name, email: user.email, picture } 
+        });
+
+    } catch (error) {
+        console.error("Google Auth Error:", error);
+        res.status(500).json({ error: "Internal server error" });
+    }
+};
